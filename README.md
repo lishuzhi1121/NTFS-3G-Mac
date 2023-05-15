@@ -147,7 +147,87 @@ Shell脚本如下：
 ```sh
 #!/bin/bash
 
-echo "TODO..."
+# 电脑开机密码
+PASS_WORD="你电脑的开机密码"
+
+echo "开始获取移动硬盘挂载点..."
+all_disks=`diskutil list`
+external_str=`echo $all_disks |grep -E "(/dev/disk\d+\s\(external, physical\))" -o`
+# 判断是否挂载了移动硬盘
+if [ -z "$external_str" ]
+then
+    echo "未获取到移动硬盘挂载点, 请插入移动硬盘后重试!!!"
+    exit 1
+fi
+ext_point=${external_str% (external*}
+echo "移动硬盘挂载点获取成功: "$ext_point
+
+echo "开始获取NTFS分区标志符..."
+ntfs_info=`echo $all_disks |grep -E "((Microsoft|Windows_NTFS) .+ (G|T)B disk\d+s\d+)" -o`
+if [ -z "$ntfs_info" ]
+then
+    echo "未获取到NTFS分区信息, 请检查后重试!!!"
+    exit 1
+fi
+ntfs_flags_str=`echo $ntfs_info |grep -E "(disk\d+s\d+)" -o`
+ntfs_flags_array=(${ntfs_flags_str// / })
+ntfs_flag=${ntfs_flags_array[0]}
+echo "NTFS分区标志符获取成功: "$ntfs_flag
+
+echo "开始获取NTFS盘符名称..."
+disk_name_str=`echo $ntfs_info |grep -E "((Microsoft|Windows_NTFS) .+ (G|T)B $ntfs_flag)" -o`
+disk_name_suffix=`echo $disk_name_str |grep -E "(\s\d+\.\d+ (G|T)B disk\d+s\d+)" -o`
+disk_name_part=${disk_name_str%%${disk_name_suffix}*}
+if [[ $disk_name_str == "Windows_NTFS"* ]]
+then
+    disk_name=${disk_name_part##*Windows_NTFS }
+elif [[ $disk_name_str == "Microsoft"* ]]; then
+	disk_name=${disk_name_part##*Microsoft Basic Data }
+else
+    echo "NTFS硬盘分区类型不支持, 获取硬盘名称失败!!!"
+    exit 1
+fi
+echo "NTFS盘符名称获取成功: "$disk_name
+
+echo "开始卸载..."
+unmount_res=`echo $PASS_WORD | sudo -S diskutil unmountDisk $ext_point`
+if [[ $unmount_res != *successful* ]]; then
+	echo "卸载失败, 挂载点: ${ext_point}, 请检查后重试!!!"
+	exit 1
+fi
+echo "卸载完成, 即将重新挂载!"
+
+echo "开始检查挂载目录..."
+if [ ! -d "/Volumes/${disk_name}" ]; then
+	echo "挂载目录: /Volumes/${disk_name} 不存在, 开始创建..."
+	echo $PASS_WORD | sudo -S mkdir "/Volumes/${disk_name}"
+	echo "挂载目录: /Volumes/${disk_name} 创建成功!"
+else
+	echo "挂载目录: /Volumes/${disk_name} 已存在!"
+fi
+
+echo "开始重新挂载..."
+echo $PASS_WORD | sudo -S mount_ntfs "/dev/${ntfs_flag}" "/Volumes/${disk_name}"
+echo "挂载完成, 开始验证..."
+uuid=`uuidgen`
+valid_file="/Volumes/${disk_name}/${uuid}.txt"
+if [ ! -f $valid_file ]; then
+	echo "验证文件不存在, 开始创建..."
+else
+	echo "验证文件已存在, 删除重建..."
+	rm -rf $valid_file
+fi
+touch $valid_file
+echo 'success' > $valid_file
+valid_result=`cat $valid_file`
+if [[ $valid_result == "success" ]]; then
+	echo "Success! Just enjoy your NTFS disk now!"
+	rm -rf $valid_file
+else
+	echo "Unfortunately! Validate your NTFS disk failed!"
+	rm -rf $valid_file
+	exit 1
+fi
 
 ```
 
